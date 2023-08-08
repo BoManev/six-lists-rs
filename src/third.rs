@@ -121,3 +121,10 @@ mod test {
     }
 }
 
+
+
+// Extra comments
+// A type is Send if it's safe to move to another thread. 
+// A type is Sync if it's safe to share between multiple threads. That is, if T is Sync, &T is Send. 
+
+// external/inherit mutability: the mutability is inherited from the mutability of its container.
