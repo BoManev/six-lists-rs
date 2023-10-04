@@ -68,7 +68,7 @@ impl<T> Drop for List<T> {
     }
 }
 
-pub struct IntoInter<T>(List<T>);
+pub struct IntoIter<T>(List<T>);
 
 pub struct Iter<'a, T> {
     nexti: Option<&'a Node<T>>,
@@ -79,8 +79,8 @@ pub struct IterMut<'a, T> {
 }
 
 impl<T> List<T> {
-    pub fn into_iter(self) -> IntoInter<T> {
-        IntoInter(self)
+    pub fn into_iter(self) -> IntoIter<T> {
+        IntoIter(self)
     }
 
     pub fn iter(&self) -> Iter<'_, T> {
@@ -100,7 +100,7 @@ impl<T> List<T> {
     }
 }
 
-impl<T> Iterator for IntoInter<T> {
+impl<T> Iterator for IntoIter<T> {
     type Item = T;
     fn next(&mut self) -> Option<Self::Item> {
         self.0.pop()
