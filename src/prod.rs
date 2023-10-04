@@ -134,6 +134,14 @@ impl<T> LinkedList<T> {
         self.len
     }
 
+    pub fn is_emptry(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn clear(&mut self) {
+        while let Some(_) = self.pop_front() {}
+    }
+
     pub fn iter(&self) -> Iter<T> {
         Iter {
             front: self.front,
@@ -159,7 +167,7 @@ impl<T> LinkedList<T> {
 
 impl<T> Drop for LinkedList<T> {
     fn drop(&mut self) {
-        while let Some(_) = self.pop_front() {}
+        self.clear()
     }
 }
 
@@ -311,9 +319,88 @@ impl<T> ExactSizeIterator for IntoIter<T> {
     }
 }
 
+impl<T> Default for LinkedList<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: Clone> Clone for LinkedList<T> {
+    fn clone(&self) -> Self {
+        let mut new_list = Self::new();
+        for elem in self {
+            new_list.push_back(elem.clone())
+        }
+        new_list
+    }
+}
+
+impl<T> Extend<T> for LinkedList<T> {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        for elem in iter {
+            self.push_back(elem)
+        }
+    }
+}
+
+impl<T> FromIterator<T> for LinkedList<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let mut list = Self::new();
+        list.extend(iter);
+        list
+    }
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for LinkedList<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self).finish()
+    }
+}
+
+impl<T: PartialEq> PartialEq for LinkedList<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().eq(other)
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        self.len() != other.len() || self.iter().ne(other)
+    }
+}
+
+impl<T: Eq> Eq for LinkedList<T> {}
+
+impl<T: PartialOrd> PartialOrd for LinkedList<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.iter().partial_cmp(other)
+    }
+}
+
+impl<T: Ord> Ord for LinkedList<T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.iter().cmp(other)
+    }
+}
+
+impl<T: std::hash::Hash> std::hash::Hash for LinkedList<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // prevent prefix collisions
+        self.len().hash(state);
+        for elem in self {
+            elem.hash(state);
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::LinkedList;
+
+    fn list_from<T: Clone>(v: &[T]) -> LinkedList<T> {
+        v.iter().map(|x| (*x).clone()).collect()
+    }
+    fn gen_list() -> LinkedList<i32> {
+        list_from(&[0, 1, 2, 3, 4, 5, 6])
+    }
 
     #[test]
     fn test_basic_front() {
@@ -350,5 +437,113 @@ mod test {
         assert_eq!(list.len(), 0);
         assert_eq!(list.pop_front(), None);
         assert_eq!(list.len(), 0);
+    }
+
+    #[test]
+    fn test_iterator() {
+        let list = gen_list();
+        for (i, elem) in list.iter().enumerate() {
+            assert_eq!(i as i32, *elem);
+        }
+
+        let mut list = LinkedList::new();
+        assert_eq!(list.iter().next(), None);
+        list.push_front(4);
+        let mut it = list.iter();
+        assert_eq!(it.size_hint(), (1, Some(1)));
+        assert_eq!(it.next().unwrap(), &4);
+        assert_eq!(it.size_hint(), (0, Some(0)));
+        assert_eq!(it.next(), None);
+    }
+
+    #[test]
+    fn test_iterator_double_end() {
+        let mut list = LinkedList::new();
+        assert_eq!(list.iter().next(), None);
+        list.push_front(4);
+        list.push_front(5);
+        list.push_front(6);
+        let mut it = list.iter();
+        assert_eq!(it.size_hint(), (3, Some(3)));
+        assert_eq!(it.next().unwrap(), &6);
+        assert_eq!(it.size_hint(), (2, Some(2)));
+        assert_eq!(it.next_back().unwrap(), &4);
+        assert_eq!(it.size_hint(), (1, Some(1)));
+        assert_eq!(it.next_back().unwrap(), &5);
+        assert_eq!(it.next_back(), None);
+        assert_eq!(it.next(), None);
+    }
+
+    #[test]
+    fn test_rev_iter() {
+        let list = gen_list();
+        for (i, elem) in list.iter().rev().enumerate() {
+            assert_eq!(6 - i as i32, *elem);
+        }
+        let mut list = LinkedList::new();
+        assert_eq!(list.iter().rev().next(), None);
+        list.push_front(4);
+        let mut it = list.iter().rev();
+        assert_eq!(it.size_hint(), (1, Some(1)));
+        assert_eq!(it.next().unwrap(), &4);
+        assert_eq!(it.size_hint(), (0, Some(0)));
+        assert_eq!(it.next(), None);
+    }
+
+    #[test]
+    fn test_mut_iter() {
+        let mut list = gen_list();
+        let mut len = list.len();
+        for (i, elem) in list.iter_mut().enumerate() {
+            assert_eq!(i as i32, *elem);
+            len -= 1;
+        }
+        assert_eq!(len, 0);
+        let mut list = LinkedList::new();
+        assert!(list.iter_mut().next().is_none());
+        list.push_front(4);
+        list.push_back(5);
+        let mut it = list.iter_mut();
+        assert_eq!(it.size_hint(), (2, Some(2)));
+        assert!(it.next().is_some());
+        assert!(it.next().is_some());
+        assert_eq!(it.size_hint(), (0, Some(0)));
+        assert!(it.next().is_none());
+    }
+
+    #[test]
+    fn test_ord() {
+        let n = list_from(&[]);
+        let m = list_from(&[1, 2, 3]);
+        assert!(n < m);
+        assert!(m > n);
+        assert!(n <= n);
+        assert!(n >= n);
+    }
+
+    #[test]
+    fn test_eq() {
+        let mut n: LinkedList<u8> = list_from(&[]);
+        let mut m = list_from(&[]);
+        assert!(n == m);
+        n.push_front(1);
+        assert!(n != m);
+        m.push_back(1);
+        assert!(n == m);
+
+        let n = list_from(&[2, 3, 4]);
+        let m = list_from(&[1, 2, 3]);
+        assert!(n != m);
+    }
+
+    #[test]
+    fn test_debug() {
+        let list: LinkedList<i32> = (0..10).collect();
+        assert_eq!(format!("{:?}", list), "[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]");
+
+        let list: LinkedList<&str> = vec!["just", "one", "test", "more"]
+            .iter().copied()
+            .collect();
+        assert_eq!(format!("{:?}", list), r#"["just", "one", "test", "more"]"#);
     }
 }
