@@ -163,6 +163,14 @@ impl<T> LinkedList<T> {
     pub fn into_iter(self) -> IntoIter<T> {
         IntoIter { list: self }
     }
+
+    pub fn cursor_mut(&mut self) -> CursorMut<T> {
+        CursorMut {
+            cur: None,
+            list: self,
+            index: None,
+        }
+    }
 }
 
 impl<T> Drop for LinkedList<T> {
@@ -182,6 +190,7 @@ pub struct IterMut<'a, T> {
     front: Link<T>,
     back: Link<T>,
     len: usize,
+    // invarient
     _ghost: PhantomData<&'a mut T>,
 }
 
@@ -391,9 +400,190 @@ impl<T: std::hash::Hash> std::hash::Hash for LinkedList<T> {
     }
 }
 
+// Send: type can be safely `send` to another thread
+// Sync: type can be safely shared between threads (&Self: Send)
+unsafe impl<T: Send> Send for LinkedList<T> {}
+unsafe impl<T: Sync> Sync for LinkedList<T> {}
+
+unsafe impl<'a, T: Send> Send for Iter<'a, T> {}
+unsafe impl<'a, T: Sync> Sync for Iter<'a, T> {}
+
+unsafe impl<'a, T: Send> Send for IterMut<'a, T> {}
+unsafe impl<'a, T: Sync> Sync for IterMut<'a, T> {}
+// Note: IntoIter can be auto-derives Send and Sync
+
+pub struct CursorMut<'a, T> {
+    cur: Link<T>,
+    list: &'a mut LinkedList<T>,
+    index: Option<usize>,
+}
+
+impl<'a, T> CursorMut<'a, T> {
+    pub fn index(&self) -> Option<usize> {
+        self.index
+    }
+
+    pub fn move_next(&mut self) {
+        if let Some(cur) = self.cur {
+            unsafe {
+                self.cur = (*cur.as_ptr()).back;
+                if self.cur.is_some() {
+                    *self.index.as_mut().unwrap() += 1;
+                } else {
+                    // arrived at ghost
+                    self.index = None;
+                }
+            }
+        } else if !self.list.is_emptry() {
+            // at ghost node, circle to front
+            self.cur = self.list.front;
+            self.index = Some(0)
+        } else {
+            // at ghost and empty
+        }
+    }
+
+    pub fn move_back(&mut self) {
+        if let Some(cur) = self.cur {
+            unsafe {
+                self.cur = (*cur.as_ptr()).front;
+                if self.cur.is_some() {
+                    *self.index.as_mut().unwrap() -= 1;
+                } else {
+                    self.index = None;
+                }
+            }
+        } else if !self.list.is_emptry() {
+            self.cur = self.list.back;
+            self.index = Some(self.list.len - 1)
+        } else {
+        }
+    }
+
+    // make cursor by mut to prevent it from yielding more than 1 value
+    pub fn current(&mut self) -> Option<&mut T> {
+        unsafe { self.cur.map(|node| &mut (*node.as_ptr()).elem) }
+    }
+
+    pub fn peek_next(&mut self) -> Option<&mut T> {
+        unsafe {
+            self.cur
+                .and_then(|node| (*node.as_ptr()).back)
+                .map(|node| &mut (*node.as_ptr()).elem)
+        }
+    }
+
+    pub fn peek_prev(&mut self) -> Option<&mut T> {
+        unsafe {
+            self.cur
+                .and_then(|node| (*node.as_ptr()).front)
+                .map(|node| &mut (*node.as_ptr()).elem)
+        }
+    }
+
+    // Input:
+    //      list.front -> A <-> B <-> C <-> D <- list.back
+    //                                ^
+    //                               cur
+    //
+    // Output:
+    //      list.front -> C <-> D <- list.back
+    //                    ^
+    //                   cur
+    //
+    //      return.front -> A <-> B <- return.back
+    pub fn split_before(&mut self) -> LinkedList<T> {
+        if let Some(cur) = self.cur {
+            unsafe {
+                let old_len = self.list.len;
+                let old_idx = self.index.unwrap();
+                let prev = (*cur.as_ptr()).front;
+
+                let new_len = old_len - old_idx;
+                let new_front = self.cur;
+                let new_back = self.list.back;
+                let new_idx = Some(0);
+
+                let out_len = old_len - new_len;
+                let out_front = self.list.front;
+                let out_back = prev;
+
+                if let Some(_prev) = prev {
+                    (*cur.as_ptr()).front = None;
+                    (*prev.unwrap().as_ptr()).back = None;
+                }
+
+                self.list.len = new_len;
+                self.list.front = new_front;
+                self.list.back = new_back;
+                self.index = new_idx;
+
+                LinkedList {
+                    front: out_front,
+                    back: out_back,
+                    len: out_len,
+                    _ghost: PhantomData,
+                }
+            }
+        } else {
+            // split at ghost
+            std::mem::replace(self.list, LinkedList::default())
+        }
+    }
+
+    // Input:
+    //      list.front -> A <-> B <-> C <-> D <- list.back
+    //                                ^
+    //                               cur
+    //
+    // Output:
+    //      list.front -> A <-> B <-> C <-> list.back
+    //                                ^
+    //                               cur
+    //
+    //      return.front -> D <- return.back
+    pub fn split_after(&mut self) -> LinkedList<T> {
+        if let Some(cur) = self.cur {
+            unsafe {
+                let old_len = self.list.len;
+                let old_idx = self.index.unwrap();
+                let next = (*cur.as_ptr()).back;
+
+                let new_len = old_idx + 1;
+                let new_idx = Some(old_idx);
+                let new_back = self.cur;
+                let new_front = self.list.front;
+
+                let out_len = old_len - new_len;
+                let out_front = next;
+                let out_back = self.list.back;
+
+                if let Some(_next) = next {
+                    (*cur.as_ptr()).back = None;
+                    (*next.unwrap().as_ptr()).front = None;
+                }
+
+                self.list.len = new_len;
+                self.list.front = new_front;
+                self.list.back = new_back;
+                self.index = new_idx;
+
+                LinkedList {
+                    front: out_front,
+                    back: out_back,
+                    len: out_len,
+                    _ghost: PhantomData,
+                }
+            }
+        } else {
+            std::mem::replace(self.list, LinkedList::default())
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use super::LinkedList;
+    use super::*;
 
     fn list_from<T: Clone>(v: &[T]) -> LinkedList<T> {
         v.iter().map(|x| (*x).clone()).collect()
@@ -542,8 +732,52 @@ mod test {
         assert_eq!(format!("{:?}", list), "[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]");
 
         let list: LinkedList<&str> = vec!["just", "one", "test", "more"]
-            .iter().copied()
+            .iter()
+            .copied()
             .collect();
         assert_eq!(format!("{:?}", list), r#"["just", "one", "test", "more"]"#);
     }
+
+    // variance is how the subtyping of its inputs affects the subtyping of its outputs
+    // F is covariant if `F<Sub>` is a subtype of F<Super>
+    // - &'a T is covariant over 'a if 'a <: 'b
+    // F is contravariant if `F<Super>` is a subtype of F<Sub> (inverted covarience)
+    // otherwise F is invariant (no subtyping relationship exists)
+    // - &mut T is an invariant over T
+    // assert whether LinkedList is send and sync (compiler check)
+    #[allow(dead_code)]
+    fn assert_thread_safety() {
+        fn is_send<T: Send>() {}
+        fn is_sync<T: Sync>() {}
+
+        is_send::<LinkedList<i32>>();
+        is_sync::<LinkedList<i32>>();
+
+        is_send::<IntoIter<i32>>();
+        is_sync::<IntoIter<i32>>();
+
+        is_send::<Iter<i32>>();
+        is_sync::<Iter<i32>>();
+
+        is_send::<IterMut<i32>>();
+        is_sync::<IterMut<i32>>();
+
+        fn _linked_list_covariant<'a, T>(x: LinkedList<&'static T>) -> LinkedList<&'a T> {
+            x
+        }
+        fn _iter_covariant<'i, 'a, T>(x: Iter<'i, &'static T>) -> Iter<'i, &'a T> {
+            x
+        }
+        fn _into_iter_covariant<'a, T>(x: IntoIter<&'static T>) -> IntoIter<&'a T> {
+            x
+        }
+    }
 }
+
+/// ```compile_fail
+/// use six_lists_rs::prod::IterMut;
+///
+/// fn iter_mut_covariant<'i, 'a, T>(x: IterMut<'i, &'static T>) -> IterMut<'i, &'a T> { x }
+/// ```
+#[allow(dead_code)]
+fn iter_mut_invariant() {}
